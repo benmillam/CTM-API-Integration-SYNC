@@ -91,7 +91,10 @@ def _walk_field_candidates(value, field_name, path=()):
 
 def _custom_field_object_value(value, field_name):
     name = _first_present(value, ("name", "key", "field", "label"))
-    if name is _Missing or raw_string(name).strip().lower() != field_name:
+    if name is _Missing:
+        return _Missing
+    name_text = raw_string(name)
+    if name_text is None or name_text.strip().lower() != field_name:
         return _Missing
 
     custom_value = _first_present(value, ("value", "values", "text", "content"))

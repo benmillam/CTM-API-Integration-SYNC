@@ -10,6 +10,7 @@ import datetime
 import os
 import sys
 import logging
+import uuid
 from google.auth import default
 from dotenv import load_dotenv
 from ctm_custom_fields import enrich_call_custom_fields
@@ -39,6 +40,22 @@ def get_env_var(var_name, required=True):
         sys.exit(1)
     return value
 
+def get_int_env_var(var_name, default):
+    value = get_env_var(var_name, required=False)
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        logger.error(f"Environment variable {var_name} must be an integer, got {value!r}")
+        sys.exit(1)
+
+def get_bool_env_var(var_name, default=False):
+    value = get_env_var(var_name, required=False)
+    if value is None or value == "":
+        return default
+    return value.strip().lower() in {"1", "true", "t", "yes", "y"}
+
 # CTM API credentials from environment variables (Secret Manager)
 access_key = get_env_var('CTM_ACCESS_KEY')
 secret_key = get_env_var('CTM_SECRET_KEY')
@@ -46,8 +63,22 @@ secret_key = get_env_var('CTM_SECRET_KEY')
 # BigQuery config
 project_id = get_env_var('PROJECT_ID', required=False) or 'data-etl-to-bigquery'
 dataset_id = 'ctm_data'
-raw_table_id = 'activities_raw_daily'
+raw_table_id = get_env_var('RAW_TABLE_ID', required=False) or 'activities_raw_daily'
 destination_table = f"{dataset_id}.{raw_table_id}"
+
+# Sync window config. Defaults preserve the existing "yesterday only" job.
+lookback_days = get_int_env_var('LOOKBACK_DAYS', 1)
+end_date_offset_days = get_int_env_var('END_DATE_OFFSET_DAYS', 1)
+include_sync_metadata = get_bool_env_var('INCLUDE_SYNC_METADATA', False)
+sync_mode = get_env_var('SYNC_MODE', required=False) or 'daily'
+
+if lookback_days < 1:
+    logger.error("LOOKBACK_DAYS must be at least 1")
+    sys.exit(1)
+
+if end_date_offset_days < 0:
+    logger.error("END_DATE_OFFSET_DAYS must be at least 0")
+    sys.exit(1)
 
 # Basic Auth header
 auth_string = f"{access_key}:{secret_key}"
@@ -71,6 +102,12 @@ bq_client = bigquery.Client(project=project_id, credentials=credentials)
 # -------------------------
 # Helper Functions
 # -------------------------
+def get_sync_date_window(reference_time=None):
+    reference_time = reference_time or datetime.datetime.utcnow()
+    end_date = reference_time.date() - datetime.timedelta(days=end_date_offset_days)
+    start_date = end_date - datetime.timedelta(days=lookback_days - 1)
+    return start_date, end_date
+
 def standardize_dataframe_schema(df, target_table_project, target_table_dataset, target_table_name):
     """
     Standardize DataFrame schema to match target BigQuery table
@@ -122,18 +159,16 @@ def standardize_dataframe_schema(df, target_table_project, target_table_dataset,
         logger.error(f"❌ Error standardizing schema: {str(e)}")
         return df
 
-def fetch_all_calls_for_account(account_id):
+def fetch_all_calls_for_account(account_id, start_date, end_date):
     """Fetch all calls for a specific account"""
     base_url = f'https://api.calltrackingmetrics.com/api/v1/accounts/{account_id}/calls'
     all_calls = []
     url = base_url
-    yesterday = datetime.datetime.utcnow() - datetime.timedelta(days=1)
-    today_str = yesterday.strftime('%Y-%m-%d')
 
     params = {
         'per_page': 100,
-        'start_date': today_str,
-        'end_date': today_str
+        'start_date': start_date.strftime('%Y-%m-%d'),
+        'end_date': end_date.strftime('%Y-%m-%d')
     }
 
     while url:
@@ -170,6 +205,12 @@ def clean_column_name(col):
 # -------------------------
 def main():
     start_time = datetime.datetime.now()
+    sync_window_start, sync_window_end = get_sync_date_window()
+    sync_loaded_at = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    sync_run_id = (
+        get_env_var('CLOUD_RUN_EXECUTION', required=False)
+        or f"{sync_mode}-{datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+    )
     
     # Log job start with structured logging
     logger.info("JOB_START: CTM Daily Sync job initiated", extra={
@@ -180,6 +221,15 @@ def main():
 
     try:
         logger.info("🚀 CTM Daily Sync job starting...")
+        logger.info(
+            "Sync config: mode=%s destination=%s lookback_days=%s start_date=%s end_date=%s metadata=%s",
+            sync_mode,
+            destination_table,
+            lookback_days,
+            sync_window_start,
+            sync_window_end,
+            include_sync_metadata,
+        )
         
         # Get active accounts
         accounts = get_active_accounts()
@@ -191,13 +241,19 @@ def main():
         # Process each account
         for account_id, account_name in accounts:
             logger.info(f"Processing account {account_id} - {account_name}")
-            calls = fetch_all_calls_for_account(account_id)
+            calls = fetch_all_calls_for_account(account_id, sync_window_start, sync_window_end)
 
             # Add account info to each call
             for call in calls:
                 enrich_call_custom_fields(call)
                 call['account_id'] = account_id
                 call['account_name'] = account_name
+                if include_sync_metadata:
+                    call['ctm_sync_loaded_at'] = sync_loaded_at
+                    call['ctm_sync_run_id'] = sync_run_id
+                    call['ctm_sync_window_start'] = sync_window_start.isoformat()
+                    call['ctm_sync_window_end'] = sync_window_end.isoformat()
+                    call['ctm_sync_lookback_days'] = lookback_days
 
                 # Convert nested objects/lists to JSON string to avoid schema errors
                 for k, v in call.items():
@@ -231,7 +287,7 @@ def main():
         df = pd.json_normalize(all_calls)
 
         # Convert timestamps (if present)
-        for date_col in ['called_at', 'billed_at']:
+        for date_col in ['called_at', 'billed_at', 'ctm_sync_loaded_at']:
             if date_col in df.columns:
                 df[date_col] = pd.to_datetime(df[date_col], errors='coerce', utc=True)
 

@@ -108,6 +108,19 @@ class CtmCustomFieldTests(unittest.TestCase):
         self.assertIsNone(call["is_spam"])
         self.assertIsNone(call["is_spam_raw"])
 
+    def test_null_custom_field_names_are_ignored(self):
+        call = {
+            "custom_fields": [
+                {"name": None, "value": "ignored"},
+                {"name": "valid_lead", "value": "true"},
+            ]
+        }
+
+        enrich_call_custom_fields(call)
+
+        self.assertIs(call["valid_lead"], True)
+        self.assertEqual(call["valid_lead_raw"], "true")
+
 
 if __name__ == "__main__":
     unittest.main()
