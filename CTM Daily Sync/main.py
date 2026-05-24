@@ -12,6 +12,7 @@ import sys
 import logging
 from google.auth import default
 from dotenv import load_dotenv
+from ctm_custom_fields import enrich_call_custom_fields
 
 # Load environment variables
 load_dotenv()
@@ -194,6 +195,7 @@ def main():
 
             # Add account info to each call
             for call in calls:
+                enrich_call_custom_fields(call)
                 call['account_id'] = account_id
                 call['account_name'] = account_name
 

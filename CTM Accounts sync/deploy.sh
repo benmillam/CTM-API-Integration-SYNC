@@ -1,135 +1,74 @@
 #!/bin/bash
+set -euo pipefail
 
-# Configuration - CHANGE THESE VALUES FOR YOUR PROJECT
-PROJECT_ID="data-etl-to-bigquery"     # Your Google Cloud project ID
-REGION="us-central1"                  # Your preferred region
-JOB_NAME="ctm-accounts-sync-job"      # Your descriptive job name
+PROJECT_ID="data-etl-to-bigquery"
+REGION="us-central1"
+JOB_NAME="ctm-accounts-sync-job"
 IMAGE_NAME="gcr.io/$PROJECT_ID/$JOB_NAME"
-SCHEDULER_JOB_NAME="ctm-accounts-sync-daily-schedule"  # Your schedule name
+SCHEDULER_JOB_NAME="ctm-accounts-sync-daily-schedule"
+RUN_URI="https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$JOB_NAME:run"
+SCHEDULER_SERVICE_ACCOUNT="$PROJECT_ID@appspot.gserviceaccount.com"
 
-echo "🚀 Smart deployment for CTM Accounts sync job..."
+echo "Deploying CTM accounts sync job..."
 
-# Step 1: Set the project
-echo "🔧 Setting project..."
-gcloud config set project $PROJECT_ID
+gcloud config set project "$PROJECT_ID"
 
-# Step 2: Enable required APIs
-echo "🔌 Enabling required APIs..."
-gcloud services enable cloudbuild.googleapis.com
-gcloud services enable run.googleapis.com
-gcloud services enable containerregistry.googleapis.com
-gcloud services enable cloudscheduler.googleapis.com
+gcloud services enable \
+  cloudbuild.googleapis.com \
+  run.googleapis.com \
+  containerregistry.googleapis.com \
+  cloudscheduler.googleapis.com \
+  secretmanager.googleapis.com
 
-# Step 3: Always build and push the latest image
-echo "📦 Building latest container image..."
-gcloud builds submit --tag $IMAGE_NAME .
+gcloud builds submit --tag "$IMAGE_NAME" .
 
-# Step 4: Smart job deployment (create or update)
-echo "🚢 Deploying Cloud Run job..."
-if gcloud run jobs describe $JOB_NAME --region=$REGION --project=$PROJECT_ID &>/dev/null; then
-    echo "🔄 Job exists, updating with latest image..."
-    gcloud run jobs update $JOB_NAME \
-      --image=$IMAGE_NAME \
-      --region=$REGION \
-      --project=$PROJECT_ID \
-      --memory=2Gi \
-      --cpu=1 \
-      --max-retries=3 \
-      --task-timeout=3600 \
-      --parallelism=1 
-      
+if gcloud run jobs describe "$JOB_NAME" --region="$REGION" --project="$PROJECT_ID" >/dev/null 2>&1; then
+  gcloud run jobs update "$JOB_NAME" \
+    --image="$IMAGE_NAME" \
+    --region="$REGION" \
+    --project="$PROJECT_ID" \
+    --memory=2Gi \
+    --cpu=1 \
+    --max-retries=3 \
+    --task-timeout=3600 \
+    --parallelism=1 \
+    --set-env-vars="PROJECT_ID=$PROJECT_ID" \
+    --set-secrets="CTM_ACCESS_KEY=CTM_ACCESS_KEY:latest,CTM_SECRET_KEY=CTM_SECRET_KEY:latest"
 else
-    echo "🆕 Job doesn't exist, creating new job..."
-    gcloud run jobs create $JOB_NAME \
-      --image=$IMAGE_NAME \
-      --region=$REGION \
-      --project=$PROJECT_ID \
-      --memory=2Gi \
-      --cpu=1 \
-      --max-retries=3 \
-      --task-timeout=3600 \
-      --parallelism=1 
-
+  gcloud run jobs create "$JOB_NAME" \
+    --image="$IMAGE_NAME" \
+    --region="$REGION" \
+    --project="$PROJECT_ID" \
+    --memory=2Gi \
+    --cpu=1 \
+    --max-retries=3 \
+    --task-timeout=3600 \
+    --parallelism=1 \
+    --set-env-vars="PROJECT_ID=$PROJECT_ID" \
+    --set-secrets="CTM_ACCESS_KEY=CTM_ACCESS_KEY:latest,CTM_SECRET_KEY=CTM_SECRET_KEY:latest"
 fi
 
-# Step 5: Smart scheduler setup (create or update)
-echo "⏰ Setting up daily schedule..."
-if gcloud scheduler jobs describe $SCHEDULER_JOB_NAME --location=$REGION &>/dev/null; then
-    echo "🔄 Schedule exists, updating..."
-    gcloud scheduler jobs update http $SCHEDULER_JOB_NAME \
-        --location=$REGION \
-        --schedule="0 0 * * *" \
-        --time-zone="UTC" \
-        --uri="https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$JOB_NAME:run" \
-        --http-method=POST \
-        --oauth-service-account-email="$PROJECT_ID@appspot.gserviceaccount.com" \
-        --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform"
+if gcloud scheduler jobs describe "$SCHEDULER_JOB_NAME" --location="$REGION" --project="$PROJECT_ID" >/dev/null 2>&1; then
+  gcloud scheduler jobs update http "$SCHEDULER_JOB_NAME" \
+    --location="$REGION" \
+    --project="$PROJECT_ID" \
+    --schedule="0 0 * * *" \
+    --time-zone="UTC" \
+    --uri="$RUN_URI" \
+    --http-method=POST \
+    --oauth-service-account-email="$SCHEDULER_SERVICE_ACCOUNT" \
+    --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform"
 else
-    echo "🆕 Schedule doesn't exist, creating new schedule..."
-    gcloud scheduler jobs create http $SCHEDULER_JOB_NAME \
-        --location=$REGION \
-        --schedule="0 0 * * *" \
-        --time-zone="UTC" \
-        --uri="https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$JOB_NAME:run" \
-        --http-method=POST \
-        --oauth-service-account-email="$PROJECT_ID@appspot.gserviceaccount.com" \
-        --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
-        --description="Daily CTM accounts sync at 12:00 AM UTC"
+  gcloud scheduler jobs create http "$SCHEDULER_JOB_NAME" \
+    --location="$REGION" \
+    --project="$PROJECT_ID" \
+    --schedule="0 0 * * *" \
+    --time-zone="UTC" \
+    --uri="$RUN_URI" \
+    --http-method=POST \
+    --oauth-service-account-email="$SCHEDULER_SERVICE_ACCOUNT" \
+    --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
+    --description="Daily CTM accounts sync at 12:00 AM UTC"
 fi
 
-echo ""
-echo "🎉 Smart deployment complete!"
-echo ""
-echo "📋 What happened:"
-echo "✅ Built latest image with your code changes"
-echo "✅ Updated/created Cloud Run job: $JOB_NAME"
-echo "✅ Updated/created daily schedule: 12:00 AM UTC"
-echo ""
-echo "🔍 Useful commands:"
-echo "📊 View logs: gcloud logging read \"resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME\" --limit=20"
-echo "⏰ View schedule: gcloud scheduler jobs list --location=$REGION"
-echo "🎯 Test schedule now: gcloud scheduler jobs run $SCHEDULER_JOB_NAME --location=$REGION"
-echo "🏃 Run job manually: gcloud run jobs execute $JOB_NAME --region=$REGION"
-echo ""
-echo "💡 Next time you update code, just run: ./deploy.sh"
-
-# Step 5: Smart scheduler setup (create or update)
-echo "⏰ Setting up daily schedule..."
-if gcloud scheduler jobs describe $SCHEDULER_JOB_NAME --location=$REGION &>/dev/null; then
-    echo "🔄 Schedule exists, updating..."
-    gcloud scheduler jobs update http $SCHEDULER_JOB_NAME \
-        --location=$REGION \
-        --schedule="0 0 * * *" \
-        --time-zone="UTC" \
-        --uri="https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$JOB_NAME:run" \
-        --http-method=POST \
-        --oauth-service-account-email="$PROJECT_ID@appspot.gserviceaccount.com" \
-        --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform"
-else
-    echo "🆕 Schedule doesn't exist, creating new schedule..."
-    gcloud scheduler jobs create http $SCHEDULER_JOB_NAME \
-        --location=$REGION \
-        --schedule="0 0 * * *" \
-        --time-zone="UTC" \
-        --uri="https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$JOB_NAME:run" \
-        --http-method=POST \
-        --oauth-service-account-email="$PROJECT_ID@appspot.gserviceaccount.com" \
-        --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
-        --description="Daily CTM accounts sync at 12:00 AM UTC"
-fi
-
-echo ""
-echo "🎉 Smart deployment complete!"
-echo ""
-echo "📋 What happened:"
-echo "✅ Built latest image with your code changes"
-echo "✅ Updated/created Cloud Run job: $JOB_NAME"
-echo "✅ Updated/created daily schedule: 12:00 AM UTC"
-echo ""
-echo "🔍 Useful commands:"
-echo "📊 View logs: gcloud logging read \"resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME\" --limit=20"
-echo "⏰ View schedule: gcloud scheduler jobs list --location=$REGION"
-echo "🎯 Test schedule now: gcloud scheduler jobs run $SCHEDULER_JOB_NAME --location=$REGION"
-echo "🏃 Run job manually: gcloud run jobs execute $JOB_NAME --region=$REGION"
-echo ""
-echo "💡 Next time you update code, just run: ./deploy.sh"
+echo "Deployment complete for $JOB_NAME."

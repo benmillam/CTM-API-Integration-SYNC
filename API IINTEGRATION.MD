@@ -21,7 +21,7 @@ Our Python ETL jobs connect to CallTrackingMetrics (CTM) API to extract call tra
 
 #### 2. Daily Activities Job (`ctm-daily-job`)
 **What it does:**
-- Runs daily at 3:00 AM UTC
+- Runs daily at 12:00 AM UTC
 - Fetches yesterday's call activities from CTM
 - Processes call details (duration, source, outcome)
 - Loads into BigQuery `ctm_data.activities_raw_daily` table
@@ -31,6 +31,7 @@ Our Python ETL jobs connect to CallTrackingMetrics (CTM) API to extract call tra
 - Tracking numbers and campaigns
 - Call outcomes (answered, missed, etc.)
 - Source attribution (Google Ads, website, etc.)
+- Lead custom fields: `valid_lead`, `lead_summary`, and `is_spam`
 
 #### 3. Batch Job (`ctm-batch-job`) 
 **What it does:**
@@ -42,12 +43,7 @@ Our Python ETL jobs connect to CallTrackingMetrics (CTM) API to extract call tra
 ## How API Integration Works
 
 ### Authentication
-```python
-# Code connects using your API credentials
-headers = {
-    'Authorization': f'Token token="{CTM_ACCESS_KEY}:{CTM_SECRET_KEY}"'
-}
-```
+Cloud Run Jobs receive `CTM_ACCESS_KEY` and `CTM_SECRET_KEY` from Google Secret Manager. Local `.env` files are only for local development and must not be uploaded to Cloud Build.
 
 ### Data Extraction Process
 1. **Connect to CTM API** using your credentials
@@ -90,7 +86,7 @@ Account Info → Clean/Structure → accounts
 - **Frequency**: Daily (full refresh)
 
 ### Activities Endpoint  
-- **URL**: `https://api.calltrackingmetrics.com/api/v1/accounts/{id}/activities`
+- **URL**: `https://api.calltrackingmetrics.com/api/v1/accounts/{id}/calls`
 - **Purpose**: Get call tracking activities
 - **Frequency**: Daily (incremental)
 
@@ -102,6 +98,7 @@ Account Info → Clean/Structure → accounts
 - **Text fields**: Trims whitespace, handles nulls
 - **Duplicates**: Removes duplicate records
 - **Data types**: Ensures proper BigQuery types
+- **Lead fields**: Recursively extracts `valid_lead`, `lead_summary`, and `is_spam` from call-level custom fields and account-specific nested contact or score objects before nested JSON is serialized
 
 ### Quality Checks
 - Validates required fields exist

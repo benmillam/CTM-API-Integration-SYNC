@@ -15,7 +15,7 @@ Cloud Scheduler automatically triggers our ETL jobs at specified times. Based on
 
 ### 2. Daily Activities Schedule  
 - **Job Name**: `ctm-daily-job-scheduler-trigger`
-- **Time**: Daily at 3:00 AM UTC
+- **Time**: Daily at 12:00 AM UTC
 - **Target**: `ctm-daily-job`
 - **Status**: Enabled
 - **Purpose**: Syncs daily call activities from CTM API
@@ -103,14 +103,14 @@ gcloud scheduler jobs update http ctm-accounts-sync-daily-schedule \
 ```
 12:00 AM UTC → Accounts Sync → Updates ctm_data.accounts
      ↓
-3:00 AM UTC → Activities Sync → Updates ctm_data.activities_raw_daily
+12:00 AM UTC → Activities Sync → Updates ctm_data.activities_raw_daily
      ↓
 Every Hour → Scheduled Query → Updates ctm_data.activities_data
 ```
 
 ### Why These Times?
 - **12:00 AM UTC**: Accounts update first (metadata needed for activities)
-- **3:00 AM UTC**: Activities sync after accounts are current
+- **12:00 AM UTC**: Activities sync runs after Cloud Scheduler triggers the accounts sync; the daily job reads the latest available `ctm_data.accounts`
 - **Hourly processing**: Ensures fresh combined data for reporting
 
 ## Monitoring Schedules
@@ -143,8 +143,8 @@ The BigQuery scheduled query image shows:
 
 ### Current Setup
 - All schedules use **UTC timezone**
-- Accounts: 12:00 AM UTC = 8:00 PM EST (previous day)
-- Activities: 3:00 AM UTC = 11:00 PM EST (previous day)
+- Accounts: 12:00 AM UTC = 8:00 PM EST (previous day during standard time)
+- Activities: 12:00 AM UTC = 8:00 PM EST (previous day during standard time)
 
 ### Changing Timezone
 ```bash

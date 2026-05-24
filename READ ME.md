@@ -53,9 +53,10 @@ The system uses three Cloud Run jobs in the `us-central1` region:
 
 ### 2. CTM Daily Job (`ctm-daily-job`)
 - **Purpose**: Syncs daily activities data from CTM API
-- **Schedule**: Daily at 3:00 AM UTC
+- **Schedule**: Daily at 12:00 AM UTC
 - **Status**: Active and running successfully
 - **Target Table**: `ctm_data.activities_raw_daily`
+- **Lead fields**: Extracts `valid_lead`, `lead_summary`, and `is_spam` from CTM call custom fields, including nested contact or score field locations
 
 ### 3. CTM Batch Job (`ctm-batch-job`)
 - **Purpose**: One-time batch processing of historical data
@@ -136,8 +137,12 @@ FROM `ctm_data.accounts`;
 
 ### Data Freshness
 - **Accounts**: Updated daily at 12:00 AM UTC
-- **Activities**: Updated daily at 3:00 AM UTC, processed hourly
+- **Activities**: Updated daily at 12:00 AM UTC, processed hourly
 - **Combined View**: Real-time combination of daily and batch data
+
+### Credentials
+- CTM API credentials are provided to Cloud Run Jobs from Secret Manager secrets `CTM_ACCESS_KEY` and `CTM_SECRET_KEY`.
+- Do not store `.env` files in source archives or container images.
 
 ### Resource Management
 - Jobs are configured with appropriate memory (2Gi) and CPU (1) limits
