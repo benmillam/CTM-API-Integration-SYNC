@@ -70,17 +70,18 @@ gcloud scheduler jobs update http ctm-accounts-sync-daily-schedule \
 ### Activities Processing Query
 - **Query Name**: "Activities sync"
 - **Schedule**: Every 1 hour starting now
-- **Purpose**: Combines data from daily and batch tables
-- **Source**: `ctm_data.activities_combined` (view)
+- **Purpose**: Combines data from daily, lookback, and batch tables with truth-preferring activity dedup
+- **Source**: `ctm_data.activities_combined_deduped_90d` (view, after manual transfer-config repoint)
 - **Destination**: `ctm_data.activities_data` (table)
 
 ### How It Works
 1. Hourly query runs automatically
-2. Takes data from `activities_combined` view
+2. Takes 90-day data from `activities_combined_deduped_90d` view
 3. View combines:
    - `activities_raw_daily` (recent data)
+   - `activities_raw_daily_lookback` (lookback replay candidates)
    - `activities_raw_final_batch` (historical data)
-4. Overwrites `activities_data` table with fresh data
+4. DELETE+INSERT refreshes the 90-day window in `activities_data` with deduped data
 
 ### Managing Scheduled Queries
 
@@ -106,6 +107,7 @@ gcloud scheduler jobs update http ctm-accounts-sync-daily-schedule \
 12:00 AM UTC → Activities Sync → Updates ctm_data.activities_raw_daily
      ↓
 Every Hour → Scheduled Query → Updates ctm_data.activities_data
+              Source view: ctm_data.activities_combined_deduped_90d
 ```
 
 ### Why These Times?
