@@ -4,15 +4,24 @@
 --   OLD pages, including mid-call snapshots such as status='in progress' and
 --   duration=NULL, received fresh load stamps and beat older completed rows.
 --
--- Rollback pointers:
---   * Revert to migrations/2026-05-24-ctm-lookback-candidate.sql.
---   * Restore the BigQuery transfer config from the console backup JSON captured
---     before repointing the transfer.
+-- Cutover / rollback:
+--   Production backups captured on 2026-07-17:
+--     * migrations/transfer-config-backup-20260717.json
+--     * migrations/live-90d-view-backup-20260717.sql
 --
--- Manual console step:
---   Backup transfer config 68764b5e-0000-2e52-afec-14c14ef34910 as JSON first,
---   then repoint its INSERT source from activities_combined_lookback_candidate_90d
---   to activities_combined_deduped_90d.
+--   Re-capture the live transfer config immediately before cutover:
+--     bq show --transfer_config --format=prettyjson projects/915327359986/locations/us/transferConfigs/68764b5e-0000-2e52-afec-14c14ef34910
+--
+--   Paste this exact NEW query into transfer config
+--   projects/915327359986/locations/us/transferConfigs/68764b5e-0000-2e52-afec-14c14ef34910:
+--     DELETE FROM `data-etl-to-bigquery.ctm_data.activities_data` WHERE DATE(called_at) >= CURRENT_DATE - 90 OR called_at IS NULL;
+--     INSERT INTO `data-etl-to-bigquery.ctm_data.activities_data` SELECT * FROM `data-etl-to-bigquery.ctm_data.activities_combined_deduped_90d` WHERE DATE(called_at) >= CURRENT_DATE - 90 OR called_at IS NULL
+--
+--   Rollback:
+--     * Restore the ORIGINAL transfer query from
+--       migrations/transfer-config-backup-20260717.json.
+--     * Restore the console-only _90d view SQL from
+--       migrations/live-90d-view-backup-20260717.sql.
 
 CREATE OR REPLACE VIEW `data-etl-to-bigquery.ctm_data.activities_combined_deduped` AS
 WITH daily_raw_candidates AS (
@@ -429,7 +438,9 @@ QUALIFY ROW_NUMBER() OVER (
 
 -- MANUAL-RUN-ONLY: one-time historical dedup for rows older than 90 days.
 -- Rows with NULL called_at belong to the active hourly 90-day refresh path.
--- Before running:
+--
+-- STEP 1: capture before counts.
+-- Record before_total_rows, before_distinct_activity_keys, and active_window_rows.
 --   SELECT COUNT(*) AS total_rows, COUNT(DISTINCT COALESCE(
 --     CONCAT(CAST(account_id AS STRING), '|id|', CAST(id AS STRING)),
 --     CONCAT(CAST(account_id AS STRING), '|sid|', sid),
@@ -438,6 +449,12 @@ QUALIFY ROW_NUMBER() OVER (
 --   FROM `data-etl-to-bigquery.ctm_data.activities_data`
 --   WHERE DATE(called_at) < DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY);
 --
+--   SELECT COUNT(*) AS active_window_rows
+--   FROM `data-etl-to-bigquery.ctm_data.activities_data`
+--   WHERE DATE(called_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+--     OR called_at IS NULL;
+--
+-- STEP 2: build and count-verify the side table.
 -- CREATE OR REPLACE TABLE `data-etl-to-bigquery.ctm_data.activities_data_historical_deduped_manual` AS
 -- SELECT *
 -- FROM `data-etl-to-bigquery.ctm_data.activities_data` AS t
@@ -468,6 +485,27 @@ QUALIFY ROW_NUMBER() OVER (
 --     FARM_FINGERPRINT(TO_JSON_STRING(t))
 -- ) = 1;
 --
--- After running:
---   SELECT COUNT(*) AS deduped_rows
+--   SELECT COUNT(*) AS side_table_rows
 --   FROM `data-etl-to-bigquery.ctm_data.activities_data_historical_deduped_manual`;
+--
+-- Expect side_table_rows = before_distinct_activity_keys.
+--
+-- STEP 3: apply the historical replacement and reconcile counts.
+-- DELETE FROM `data-etl-to-bigquery.ctm_data.activities_data`
+-- WHERE DATE(called_at) < DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY);
+--
+-- INSERT INTO `data-etl-to-bigquery.ctm_data.activities_data`
+-- SELECT *
+-- FROM `data-etl-to-bigquery.ctm_data.activities_data_historical_deduped_manual`;
+--
+--   SELECT COUNT(*) AS after_historical_rows
+--   FROM `data-etl-to-bigquery.ctm_data.activities_data`
+--   WHERE DATE(called_at) < DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY);
+--
+--   SELECT COUNT(*) AS after_active_window_rows
+--   FROM `data-etl-to-bigquery.ctm_data.activities_data`
+--   WHERE DATE(called_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+--     OR called_at IS NULL;
+--
+-- Expect after_historical_rows = side_table_rows.
+-- Expect after_active_window_rows = active_window_rows, proving the hourly window was untouched.

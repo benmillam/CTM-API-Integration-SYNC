@@ -30,6 +30,26 @@ class ActivitiesDedupMigrationTests(unittest.TestCase):
         self.assertIn("activities_combined_deduped`", self.sql)
         self.assertIn("activities_combined_deduped_90d`", self.sql)
 
+    def test_cutover_header_contains_operator_executable_backup_and_queries(self):
+        self.assertIn("migrations/transfer-config-backup-20260717.json", self.sql)
+        self.assertIn("migrations/live-90d-view-backup-20260717.sql", self.sql)
+        self.assertIn(
+            "bq show --transfer_config --format=prettyjson "
+            "projects/915327359986/locations/us/transferConfigs/68764b5e-0000-2e52-afec-14c14ef34910",
+            self.sql,
+        )
+        self.assertIn(
+            "--     DELETE FROM `data-etl-to-bigquery.ctm_data.activities_data` "
+            "WHERE DATE(called_at) >= CURRENT_DATE - 90 OR called_at IS NULL;",
+            self.sql,
+        )
+        self.assertIn(
+            "--     INSERT INTO `data-etl-to-bigquery.ctm_data.activities_data` "
+            "SELECT * FROM `data-etl-to-bigquery.ctm_data.activities_combined_deduped_90d` "
+            "WHERE DATE(called_at) >= CURRENT_DATE - 90 OR called_at IS NULL",
+            self.sql,
+        )
+
     def test_partition_key_contains_existing_identity_fallbacks(self):
         self.assertIn("CONCAT(CAST(account_id AS STRING), '|id|', CAST(id AS STRING))", self.sql)
         self.assertIn("CONCAT(CAST(account_id AS STRING), '|sid|', sid)", self.sql)
@@ -92,7 +112,35 @@ class ActivitiesDedupMigrationTests(unittest.TestCase):
             "-- WHERE DATE(called_at) < DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)",
             normalized_block,
         )
-        self.assertNotIn("called_at IS NULL", normalized_block)
+        self.assertIn(
+            "-- WHERE DATE(called_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY) "
+            "-- OR called_at IS NULL;",
+            normalized_block,
+        )
+
+    def test_historical_manual_block_applies_and_reconciles_side_table(self):
+        normalized_block = re.sub(r"\s+", " ", self._manual_run_only_block())
+
+        for label in ("-- STEP 1:", "-- STEP 2:", "-- STEP 3:"):
+            with self.subTest(label=label):
+                self.assertIn(label, normalized_block)
+
+        self.assertIn(
+            "-- DELETE FROM `data-etl-to-bigquery.ctm_data.activities_data` "
+            "-- WHERE DATE(called_at) < DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY);",
+            normalized_block,
+        )
+        self.assertIn(
+            "-- INSERT INTO `data-etl-to-bigquery.ctm_data.activities_data` "
+            "-- SELECT * "
+            "-- FROM `data-etl-to-bigquery.ctm_data.activities_data_historical_deduped_manual`;",
+            normalized_block,
+        )
+        self.assertIn("-- Expect after_historical_rows = side_table_rows.", normalized_block)
+        self.assertIn(
+            "-- Expect after_active_window_rows = active_window_rows, proving the hourly window was untouched.",
+            normalized_block,
+        )
 
     def test_90d_predicate_is_inside_each_source_branch(self):
         view_90d = self._view_body("activities_combined_deduped_90d")

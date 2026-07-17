@@ -1,0 +1,27 @@
+{
+  "dataSourceId": "scheduled_query",
+  "datasetRegion": "us",
+  "destinationDatasetId": "",
+  "displayName": "Activties sync",
+  "emailPreferences": {
+    "enableFailureEmail": true
+  },
+  "name": "projects/915327359986/locations/us/transferConfigs/68764b5e-0000-2e52-afec-14c14ef34910",
+  "nextRunTime": "2026-07-17T10:37:00Z",
+  "ownerInfo": {
+    "email": "data-etl-to-bigquery@appspot.gserviceaccount.com"
+  },
+  "params": {
+    "query": "DELETE FROM `data-etl-to-bigquery.ctm_data.activities_data` WHERE DATE(called_at) >= CURRENT_DATE - 90 OR called_at IS NULL;\nINSERT INTO `data-etl-to-bigquery.ctm_data.activities_data` SELECT * FROM `data-etl-to-bigquery.ctm_data.activities_combined_lookback_candidate_90d` WHERE DATE(called_at) >= CURRENT_DATE - 90 OR called_at IS NULL"
+  },
+  "schedule": "every 1 hours",
+  "scheduleOptions": {},
+  "scheduleOptionsV2": {
+    "timeBasedSchedule": {
+      "schedule": "every 1 hours"
+    }
+  },
+  "state": "SUCCEEDED",
+  "updateTime": "2026-07-08T00:14:52.970205Z",
+  "userId": "5088907331714357693"
+}
