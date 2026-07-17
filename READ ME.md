@@ -34,6 +34,7 @@ CTM API → Cloud Run Jobs → BigQuery → Scheduled Queries → Final Tables
 - **`activities_raw_daily`**: Daily call activities from CTM API
 - **`activities_raw_final_batch`**: Final batch of activities data
 - **`activities_combined`**: View combining daily and batch data
+- **`activities_combined_deduped` / `activities_combined_deduped_90d`**: Truth-preferring dedup views for daily, lookback, and batch activity candidates
 - **`activities_data`**: Final processed table (scheduled query output)
 
 ### `ctm_data_batch` (Batch Processing Dataset)
@@ -88,9 +89,9 @@ The system uses three Cloud Run jobs in the `us-central1` region:
 ### Activities Data Processing
 - **Query Name**: "Activities sync"
 - **Schedule**: Every 1 hour
-- **Purpose**: Combines data from `activities_raw_daily` and `activities_raw_final_batch`
+- **Purpose**: Combines and dedups data from `activities_raw_daily`, `activities_raw_daily_lookback`, and `activities_raw_final_batch`
 - **Output**: `ctm_data.activities_data`
-- **SQL**: `SELECT * FROM ctm_data.activities_combined`
+- **SQL**: DELETE+INSERT 90-day refresh from `ctm_data.activities_combined_deduped_90d` after the manual transfer-config repoint
 
 ### Query Management
 - **Location**: BigQuery → Scheduled Queries
@@ -117,6 +118,7 @@ The system uses three Cloud Run jobs in the `us-central1` region:
 - **`ctm_data.activities_data`**: Main table for call activities analysis
 - **`ctm_data.accounts`**: Account information and metadata
 - **`ctm_data.activities_combined`**: Real-time view of combined activities
+- **`ctm_data.activities_combined_deduped`**: Real-time view of combined activities with truth-preferring duplicate resolution
 
 ### Query Examples
 ```sql
